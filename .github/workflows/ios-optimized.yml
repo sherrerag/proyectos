@@ -1,0 +1,86 @@
+name: iOS CI/CD Optimized
+
+# Se ejecuta en push a main o pull request
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch: # Permite ejecutar manualmente (para IPA/TestFlight)
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      # 1️⃣ Checkout
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2️⃣ Cache CocoaPods
+      - name: Cache Pods
+        uses: actions/cache@v3
+        with:
+          path: Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('Podfile.lock') }}
+
+      # 3️⃣ Cache Ruby gems
+      - name: Cache Ruby gems
+        uses: actions/cache@v3
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-ruby-${{ hashFiles('Gemfile.lock') }}
+
+      # 4️⃣ Install dependencies
+      - name: Install Ruby gems
+        run: bundle install
+
+      - name: Install CocoaPods
+        run: pod install
+        working-directory: ./TuProyecto
+
+      # 5️⃣ Compile app (Release)
+      - name: Build app
+        run: xcodebuild -workspace "TuProyecto.xcworkspace" \
+                        -scheme "TuEsquema" \
+                        -configuration Release \
+                        -destination 'generic/platform=iOS' \
+                        clean build
+
+      # 6️⃣ Run minimal test
+      - name: Run basic test
+        run: xcodebuild test \
+          -workspace "TuProyecto.xcworkspace" \
+          -scheme "TuEsquema" \
+          -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0' \
+          -only-testing:TuProyectoTests/PrimerTest
+
+      # 7️⃣ Optional: Build IPA for TestFlight or ad-hoc
+      - name: Build IPA (optional)
+        if: github.event_name == 'workflow_dispatch' # Solo cuando se ejecute manualmente
+        run: |
+          gem install fastlane
+          fastlane gym \
+            --workspace "TuProyecto.xcworkspace" \
+            --scheme "TuEsquema" \
+            --export_method ad-hoc \
+            --export_options "provisioningProfiles:{'com.tu.bundle.id':'profile.mobileprovision'}" \
+            --output_directory ./build \
+            --output_name TuApp.ipa
+
+      # 8️⃣ Optional: Upload IPA as artifact
+      - name: Upload IPA artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v3
+        with:
+          name: TuApp-IPA
+          path: ./build/TuApp.ipa
+
+      # 9️⃣ Optional: Upload to TestFlight
+      - name: Upload to TestFlight
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          fastlane pilot upload \
+            -u ${{ secrets.APPLE_ID }} \
+            -i ./build/TuApp.ipa \
+            --skip_waiting_for_build_processing true
