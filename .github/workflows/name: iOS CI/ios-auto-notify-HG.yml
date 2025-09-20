@@ -1,0 +1,113 @@
+name: iOS CI/CD + Notification
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch: # Para builds manuales
+
+jobs:
+  build-deploy-notify:
+    runs-on: macos-latest
+
+    steps:
+      # 1️⃣ Clonar repo
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2️⃣ Cache Pods
+      - name: Cache Pods
+        uses: actions/cache@v3
+        with:
+          path: Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('Podfile.lock') }}
+
+      # 3️⃣ Cache Ruby gems
+      - name: Cache Ruby gems
+        uses: actions/cache@v3
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-ruby-${{ hashFiles('Gemfile.lock') }}
+
+      # 4️⃣ Instalar dependencias
+      - name: Install Ruby gems
+        run: bundle install
+
+      - name: Install CocoaPods
+        run: pod install
+        working-directory: ./TuProyecto
+
+      # 5️⃣ Compilar app (Release)
+      - name: Build app
+        run: xcodebuild -workspace "TuProyecto.xcworkspace" \
+                        -scheme "TuEsquema" \
+                        -configuration Release \
+                        -destination 'generic/platform=iOS' \
+                        clean build
+
+      # 6️⃣ Ejecutar tests mínimos
+      - name: Run basic test
+        run: xcodebuild test \
+          -workspace "TuProyecto.xcworkspace" \
+          -scheme "TuEsquema" \
+          -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0' \
+          -only-testing:TuProyectoTests/PrimerTest
+
+      # 7️⃣ Compilar IPA y subir como artifact (solo manual)
+      - name: Build IPA
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          gem install fastlane
+          fastlane gym \
+            --workspace "TuProyecto.xcworkspace" \
+            --scheme "TuEsquema" \
+            --export_method ad-hoc \
+            --export_options "provisioningProfiles:{'com.tu.bundle.id':'profile.mobileprovision'}" \
+            --output_directory ./build \
+            --output_name TuApp.ipa
+
+      - name: Upload IPA artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v3
+        with:
+          name: TuApp-IPA
+          path: ./build/TuApp.ipa
+
+      # 8️⃣ Subir a TestFlight (opcional)
+      - name: Upload to TestFlight
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          fastlane pilot upload \
+            -u ${{ secrets.APPLE_ID }} \
+            -i ./build/TuApp.ipa \
+            --skip_waiting_for_build_processing true
+
+      # 9️⃣ Enviar notificación por correo con link al artifact
+      - name: Send email notification
+        if: github.event_name == 'workflow_dispatch'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USER }}
+          password: ${{ secrets.EMAIL_PASS }}
+          subject: "Nuevo build iOS disponible"
+          to: ${{ secrets.EMAIL_TO }}
+          body: |
+            El build de la app iOS ha finalizado.
+            Descarga el IPA desde el artifact: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          secure: true
+
+      # 🔹 Opcional: notificación por Slack
+      - name: Send Slack notification
+        if: github.event_name == 'workflow_dispatch'
+        uses: slackapi/slack-github-action@v1.23.0
+        with:
+          payload: |
+            {
+              "channel": "#ios-builds",
+              "text": "Nuevo build iOS disponible: <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|Descargar IPA>"
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
