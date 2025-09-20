@@ -1,0 +1,44 @@
+name: iOS Minimal CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      # 1️⃣ Checkout
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2️⃣ Cache CocoaPods
+      - name: Cache Pods
+        uses: actions/cache@v3
+        with:
+          path: Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('Podfile.lock') }}
+
+      # 3️⃣ Install CocoaPods
+      - name: Install Pods
+        run: pod install
+        working-directory: ./TuProyecto
+
+      # 4️⃣ Compile app (Release)
+      - name: Build app
+        run: xcodebuild -workspace "TuProyecto.xcworkspace" \
+                        -scheme "TuEsquema" \
+                        -configuration Release \
+                        -destination 'generic/platform=iOS' \
+                        clean build
+
+      # 5️⃣ Run minimal test
+      - name: Run basic test
+        run: xcodebuild test \
+          -workspace "TuProyecto.xcworkspace" \
+          -scheme "TuEsquema" \
+          -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0' \
+          -only-testing:TuProyectoTests/PrimerTest
